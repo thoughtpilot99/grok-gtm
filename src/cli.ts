@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { loadEnv, requireEnv, hint } from "./env.js"
 import { loadOffer, loadRanker } from "./config.js"
@@ -91,7 +92,7 @@ function printHelp(): void {
   npm run gtm -- watch [--pages 1] [--per-page 25] [--business 3]
   npm run gtm -- dossier [--limit 20]
   npm run gtm -- rank [--heuristic]
-  npm run gtm -- draft [--tier strike,priority] [--limit 25]
+  npm run gtm -- draft [--tier strike,priority] [--limit 20]
   npm run gtm -- draft --confirm
   npm run gtm -- activate --campaign <id> --confirm
   npm run gtm -- pause --campaign <id> --confirm
@@ -467,7 +468,8 @@ function outcome(): void {
 
 function learn(): void {
   const outcomes = loadOutcomes()
-  const ranked = readJsonl<RankedLead>(outPath("ranked.json"))
+  const rankedPath = outPath("ranked.json")
+  const ranked: RankedLead[] = existsSync(rankedPath) ? JSON.parse(readFileSync(rankedPath, "utf8")) : []
   const byId = new Map(ranked.map((row) => [row.lead.id, row]))
   const floor = loadRanker().act_floor
   let above = 0

@@ -1,11 +1,10 @@
 # Who this bot prospects for. Seeded from the Overloop business in Max.
 # Change it before you enroll anyone for a different company.
-# sender_id is the Overloop user whose mailbox sends. 1547 is the API key
-# owner on this account and has a connected Gmail. Change it if you want a
-# different mailbox from `npm run gtm -- doctor`.
+# sender_id is the Overloop user whose mailbox sends. Leave it null to send
+# from the API key owner, or set it to a user_id from `npm run gtm -- doctor`.
 
 business_id: 3
-sender_id: 1547
+sender_id: null
 timezone: Europe/Brussels
 sending_days:
   - monday

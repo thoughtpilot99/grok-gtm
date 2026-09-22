@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { heuristicJudgment, scoreLead } from "./policy.js"
+import { gateLead, heuristicJudgment, scoreLead } from "./policy.js"
 import type { LeadRecord, OfferConfig } from "./types.js"
 
 const offer: OfferConfig = {
@@ -100,6 +100,8 @@ test("a second signal adds only when the two are one story", () => {
   const apart = scoreLead(base, { ...judged, signals_one_story: false, live_need: 0.8, need_matches_offer: 0.8 })
   const together = scoreLead(base, { ...judged, signals_one_story: true, live_need: 0.8, need_matches_offer: 0.8 })
   assert.ok(together.score > apart.score)
+  assert.equal(apart.tier, "priority")
+  assert.equal(together.tier, "strike")
 })
 
 test("engagement with only a hint stays light and starts on LinkedIn", () => {
@@ -117,4 +119,15 @@ test("engagement with only a hint stays light and starts on LinkedIn", () => {
 test("heuristic does not mark the lead judged", () => {
   const judgment = heuristicJudgment(lead({ signals: [{ slug: "atlas-icp" }] }), offer)
   assert.equal(judgment.judged, false)
+})
+
+test("excluded keywords match whole words only", () => {
+  assert.equal(gateLead(lead({ jobTitle: "International Sales Manager", headline: "International Sales Manager" }), offer), null)
+  assert.match(gateLead(lead({ jobTitle: "Sales intern", headline: "Sales intern" }), offer) ?? "", /Excluded keyword/)
+})
+
+test("a live need for something we do not sell is held", () => {
+  const row = scoreLead(lead({}), { ...judged, need_matches_offer: 0.1 })
+  assert.equal(row.tier, "hold")
+  assert.equal(row.playbook, null)
 })
