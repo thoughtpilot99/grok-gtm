@@ -55,12 +55,17 @@ export function normalizeIcpScore(score: number | null): number {
   return clamp01(score / 100)
 }
 
+function wholeWord(needle: string): RegExp {
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "u")
+}
+
 export function gateLead(lead: LeadRecord, offer: OfferConfig): string | null {
   if (!lead.company && !lead.name) return "No company and no person"
   const haystack = `${lead.company ?? ""} ${lead.jobTitle ?? ""} ${lead.headline ?? ""}`.toLowerCase()
   for (const word of offer.icp.excluded_keywords) {
     const needle = word.trim().toLowerCase()
-    if (needle && haystack.includes(needle)) return `Excluded keyword: ${word}`
+    if (needle && wholeWord(needle).test(haystack)) return `Excluded keyword: ${word}`
   }
   if (lead.signals.length === 0 && !lead.evidence) return "No signal and no evidence"
   return null
