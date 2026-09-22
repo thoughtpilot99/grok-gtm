@@ -27,6 +27,8 @@ export const DEFAULT_RANKER: RankerConfig = {
     max_icp: 3,
   },
   recency_days: 30,
+  one_per_account: true,
+  account_cooldown_days: 30,
 }
 
 export function clamp01(value: number): number {
@@ -47,7 +49,7 @@ export function recencyScore(ageDays: number | null, windowDays: number): number
   return clamp01(1 - ageDays / windowDays)
 }
 
-/** Max sometimes scores ICP on a small integer scale, sometimes on 0–100. */
+/** max sometimes scores ICP on a small integer scale, sometimes on 0–100. */
 export function normalizeIcpScore(score: number | null): number {
   if (score == null || Number.isNaN(score)) return 0
   if (score <= 1) return clamp01(score)
@@ -210,4 +212,44 @@ export function scoreLead(
     reasons,
     ageDays: ageDays == null ? null : Math.round(ageDays * 10) / 10,
   }
+}
+
+const ENROLLABLE: Tier[] = ["strike", "priority", "standard", "light"]
+
+/**
+ * One contact per account. The best-scoring enrollable lead at an account keeps
+ * its sequence; any other contact there is held with the name of the lead that
+ * covers the account. An account enrolled within the cooldown is held too.
+ * `ranked` must already be sorted by score, highest first.
+ */
+export function applyAccountRules(
+  ranked: RankedLead[],
+  ranker: RankerConfig = DEFAULT_RANKER,
+  recentlyEnrolled: Map<string, string> = new Map(),
+): RankedLead[] {
+  const covered = new Map<string, RankedLead>()
+  return ranked.map((row) => {
+    if (!row.account || !ENROLLABLE.includes(row.tier)) return row
+    const recent = recentlyEnrolled.get(row.account)
+    if (recent) {
+      return {
+        ...row,
+        tier: "hold",
+        playbook: null,
+        reasons: [...row.reasons, `Account already in a sequence (${recent}). Cooldown ${ranker.account_cooldown_days} days.`],
+      }
+    }
+    if (!ranker.one_per_account) return row
+    const first = covered.get(row.account)
+    if (!first) {
+      covered.set(row.account, row)
+      return row
+    }
+    return {
+      ...row,
+      tier: "hold",
+      playbook: null,
+      reasons: [...row.reasons, `Another contact at this account is enrolled this run (lead ${first.lead.id}, ${first.tier}, ${first.score}).`],
+    }
+  })
 }

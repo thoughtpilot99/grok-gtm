@@ -1,11 +1,11 @@
 ---
 name: grok-gtm
-description: Signal-based multi-channel GTM bot. Pull Max leads, judge buying signals, and enroll the right tier into paused Overloop email and LinkedIn sequences.
+description: Signal-based multi-channel GTM bot. Pull max leads, judge buying signals, and enroll the right tier into Overloop email and LinkedIn sequences with auto-send off.
 ---
 
 # Grok GTM
 
-You are the judge. This repo does not call another model. Max supplies leads and the evidence. You decide whether the evidence is a live need, whether it matches the offer, and whether the contact can buy. Overloop runs the email and LinkedIn sequences. Code applies the weights.
+You are the judge. This repo does not call another model. max supplies leads and the evidence. You decide whether the evidence is a live need, whether it matches the offer, and whether the contact can buy. Overloop runs the email and LinkedIn sequences. Code applies the weights.
 
 Do not enroll a lead you have not judged. Do not turn a campaign on unless the operator explicitly tells you to.
 
@@ -13,13 +13,13 @@ Do not enroll a lead you have not judged. Do not turn a campaign on unless the o
 
 From the repo root:
 
-1. `npm run gtm -- doctor` — confirm both keys, the mailbox, and which Max business is selected.
-2. `npm run gtm -- watch --pages 1 --per-page 25` — pull the newest leads into `data/leads.jsonl`. That file is local and stays out of git.
-3. `npm run gtm -- dossier` — write `out/dossier.md`.
-4. Judge every lead in the dossier. Append JSON lines to `out/judgments.jsonl`.
-5. `npm run gtm -- rank` — write `out/ranked.csv`. Read it from the top.
+1. `npm run gtm -- doctor` — confirm both keys, the mailbox, and which max business is selected.
+2. `npm run gtm -- watch --pages 1 --per-page 25` — pull a page of leads into `data/leads.jsonl`. That file is local and stays out of git.
+3. `npm run gtm -- dossier` — write `out/dossier.md`. (`npm run gtm -- prep` runs watch and dossier together.)
+4. Judge every lead in the dossier. Append one JSON line per lead to `out/judgments.jsonl`, with the lead's `fingerprint` copied from the dossier.
+5. `npm run gtm -- rank` — write `out/ranked.csv`. Read it from the top. `npm run gtm -- calls` writes the strike rows to `out/calls.csv` for the operator to phone first.
 6. `npm run gtm -- draft` — dry run. Show the operator the plan.
-7. `npm run gtm -- draft --confirm` — only after the operator agrees. Creates paused Overloop campaigns and enrolls judged leads. Review mode stays on, so Overloop queues messages instead of sending them.
+7. `npm run gtm -- draft --confirm` — only after the operator agrees. Creates the Overloop campaigns with auto-send off and enrolls judged leads, one contact per account. Overloop queues the messages for review instead of sending them. Every enrollment is recorded in `data/enrollments.jsonl`.
 8. `npm run gtm -- activate --campaign <id> --confirm` — only when the operator says to start that campaign.
 9. When replies come in, `npm run gtm -- outcome --lead <id> --result reply` and then `npm run gtm -- learn`.
 
@@ -44,10 +44,19 @@ Then read the Contact block and answer only:
 Write one line:
 
 ```json
-{"lead_id":123,"live_need":0.8,"need_matches_offer":0.7,"icp_fit":0.6,"persona_fit":0.2,"signals_one_story":true,"competitor":false,"hook":"They reposted the Head of Growth role after the Germany launch.","reason":"The role is still open and the contact is a recruiter, so this is a reroute.","judged":true}
+{"lead_id":123,"live_need":0.8,"need_matches_offer":0.7,"icp_fit":0.6,"persona_fit":0.2,"signals_one_story":true,"competitor":false,"hook":"They reposted the Head of Growth role after the Germany launch.","reason":"The role is still open and the contact is a recruiter, so this is a reroute.","judged":true,"fingerprint":"243b5bac7c"}
 ```
 
 Open `post_url` or the company site before you give a strike score, and only keep evidence you actually saw. If the page is dead, say so in `reason` and set `live_need` to 0.
+
+## Accounts
+
+max can send several contacts for one company. The code groups them into one account by website domain, then by company name.
+
+- Signals are pooled per account. The Company block lists every signal at the account, from any contact, and evidence from the other contacts. Judge the company once, the same way for every contact there. Only `persona_fit` differs.
+- A second signal can come from a different contact. A reposted role on one contact and a launch on another are one account with two signals. Set `signals_one_story` on that basis.
+- Each lead carries the account's `Fingerprint`. Copy it into the judgment. When a new signal or a new contact lands on the account, the fingerprint changes, the old judgment goes stale, and the lead comes back into the dossier. That is how a held lead gets looked at again when its second signal arrives.
+- Only the best contact per account is enrolled in a run. Other contacts there are held, with the lead that covers the account named in the reasons. An account enrolled in the last `account_cooldown_days` is held too.
 
 ## What the code will do with that
 
@@ -90,4 +99,4 @@ Do not activate to "test". `npm run gtm -- probe` creates an empty campaign and 
 
 ## After replies
 
-Log `reply`, `meeting`, `no_reply`, or `bounce`. `learn` compares reply rate above the line with reply rate below it. If the bottom replies more, it prints `MISCALIBRATED`. Fix the offer, the ICP, or one weight, then rank again. Do not invent a new model call.
+Log `reply`, `meeting`, `no_reply`, or `bounce`. `learn` compares reply rate above the line with reply rate below it. With at least five logged leads on each side, if the bottom replies more, it prints `MISCALIBRATED`. Change one weight in `config/ranker.yaml` and rank again; the judgments stay valid. If you change the offer or the ICP instead, clear `out/judgments.jsonl` and judge again, because `need_matches_offer` and `icp_fit` were read against the old ones. Do not invent a new model call.

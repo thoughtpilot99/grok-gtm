@@ -6,10 +6,15 @@ import { Max } from "./max.js"
 import { Overloop } from "./overloop.js"
 import { SIGNALS } from "./signals.js"
 import { PLAYBOOKS, campaignName } from "./playbooks.js"
-import { gateLead, heuristicJudgment, scoreLead } from "./policy.js"
+import { applyAccountRules, gateLead, heuristicJudgment, scoreLead } from "./policy.js"
+import { buildAccounts, withAccountSignals, type Account } from "./accounts.js"
 import {
+  OUTCOMES,
+  appendEnrollment,
   appendOutcome,
   dataPath,
+  loadEnrollments,
+  toCsv,
   loadJudgments,
   loadLeads,
   loadOutcomes,
@@ -39,6 +44,7 @@ const parsed = parseArgs({
     result: { type: "string" },
     campaign: { type: "string" },
     help: { type: "boolean", default: false },
+    live: { type: "boolean", default: false },
   },
   strict: false,
 })
@@ -58,12 +64,16 @@ async function main(): Promise<void> {
       return signals()
     case "watch":
       return watch()
+    case "prep":
+      return prep()
     case "dossier":
       return dossier()
     case "rank":
       return rank()
     case "draft":
       return draft()
+    case "calls":
+      return calls()
     case "activate":
       return setStatus("on")
     case "pause":
@@ -88,10 +98,12 @@ function printHelp(): void {
 
   npm run gtm -- doctor
   npm run gtm -- businesses
-  npm run gtm -- signals
+  npm run gtm -- signals [--live]
   npm run gtm -- watch [--pages 1] [--per-page 25] [--business 3]
   npm run gtm -- dossier [--limit 20]
+  npm run gtm -- prep                 watch, then dossier (the morning job)
   npm run gtm -- rank [--heuristic]
+  npm run gtm -- calls [--tier strike]
   npm run gtm -- draft [--tier strike,priority] [--limit 20]
   npm run gtm -- draft --confirm
   npm run gtm -- activate --campaign <id> --confirm
@@ -103,8 +115,8 @@ function printHelp(): void {
   npm run gtm -- probe
 
 Grok writes out/judgments.jsonl between dossier and rank.
-Draft and activate do not send until you pass --confirm.
-Campaigns are created paused, with message review left on.`)
+Draft and activate do nothing until you pass --confirm.
+Campaigns are created with auto-send off, so every message waits for review.`)
 }
 
 function offer(): OfferConfig {
@@ -170,7 +182,8 @@ async function businesses(): Promise<void> {
   console.log(JSON.stringify(rows.map((item) => ({ id: item.id, name: item.name, website: item.website, description: item.description })), null, 2))
 }
 
-function signals(): void {
+async function signals(): Promise<void> {
+  const live = flags.live ? new Set((await new Max(requireEnv("MAX_API_KEY")).signals()).map((item) => item.slug)) : null
   console.log(
     JSON.stringify(
       SIGNALS.map((signal) => ({
@@ -181,6 +194,7 @@ function signals(): void {
         channel: signal.channelBias,
         live_need_prior: signal.liveNeedPrior,
         max_catalog: signal.available,
+        ...(live ? { live_in_max_api: live.has(signal.slug) } : {}),
         summary: signal.summary,
       })),
       null,
@@ -219,34 +233,72 @@ async function watch(): Promise<void> {
   )
 }
 
-function rankAll(useHeuristic: boolean): { ranked: RankedLead[]; gated: Array<{ lead_id: number; reason: string }> } {
+async function prep(): Promise<void> {
+  await watch()
+  await dossier()
+}
+
+function currentJudgment(judgment: Judgment | undefined, account: Account | undefined): Judgment | undefined {
+  if (!judgment) return undefined
+  if (judgment.fingerprint && account && judgment.fingerprint !== account.fingerprint) return undefined
+  return judgment
+}
+
+function recentlyEnrolledAccounts(cooldownDays: number): Map<string, string> {
+  const cutoff = Date.now() - cooldownDays * 86_400_000
+  const map = new Map<string, string>()
+  for (const row of loadEnrollments()) {
+    const at = new Date(row.at).getTime()
+    if (Number.isNaN(at) || at < cutoff) continue
+    map.set(row.account, `${row.campaign}, ${row.at.slice(0, 10)}`)
+  }
+  return map
+}
+
+function rankAll(useHeuristic: boolean): { ranked: RankedLead[]; gated: Array<{ lead_id: number; reason: string }>; stale: number } {
   const cfg = offer()
   const ranker = loadRanker()
   const judgments = loadJudgments()
+  const leads = loadLeads()
+  const accounts = buildAccounts(leads.filter((lead) => !gateLead(lead, cfg)))
+  const accountOf = new Map<number, Account>()
+  for (const account of accounts.values()) for (const lead of account.leads) accountOf.set(lead.id, account)
   const gated: Array<{ lead_id: number; reason: string }> = []
   const ranked: RankedLead[] = []
-  for (const lead of loadLeads()) {
+  let stale = 0
+  for (const lead of leads) {
     const gate = gateLead(lead, cfg)
     if (gate) {
       gated.push({ lead_id: lead.id, reason: gate })
       continue
     }
-    const judgment = judgments.get(lead.id) ?? (useHeuristic ? heuristicJudgment(lead, cfg) : null)
+    const account = accountOf.get(lead.id)
+    const stored = judgments.get(lead.id)
+    const current = currentJudgment(stored, account)
+    if (stored && !current) stale += 1
+    const judgment = current ?? (useHeuristic ? heuristicJudgment(lead, cfg) : null)
     if (!judgment) continue
-    ranked.push(scoreLead(lead, judgment, ranker))
+    const row = scoreLead(withAccountSignals(lead, account), judgment, ranker)
+    ranked.push({ ...row, lead, account: account?.key })
   }
   ranked.sort((a, b) => b.score - a.score)
-  return { ranked, gated }
+  const ruled = applyAccountRules(ranked, ranker, recentlyEnrolledAccounts(ranker.account_cooldown_days))
+  return { ranked: ruled, gated, stale }
 }
 
 async function dossier(): Promise<void> {
   const cfg = offer()
   const limit = Number(flags.limit)
   const judgments = loadJudgments()
-  const leads = loadLeads()
-    .filter((lead) => !judgments.has(lead.id) && !gateLead(lead, cfg))
+  const open = loadLeads().filter((lead) => !gateLead(lead, cfg))
+  const accounts = buildAccounts(open)
+  const accountOf = new Map<number, Account>()
+  for (const account of accounts.values()) for (const lead of account.leads) accountOf.set(lead.id, account)
+  const leads = open
+    .filter((lead) => !currentJudgment(judgments.get(lead.id), accountOf.get(lead.id)))
     .sort((a, b) => (b.triggeredAt ?? "").localeCompare(a.triggeredAt ?? ""))
     .slice(0, limit)
+  const rejudged = leads.filter((lead) => judgments.has(lead.id)).length
   if (leads.length === 0) {
     console.log("No unjudged leads. Run watch, or judgments already cover the store.")
     return
@@ -258,6 +310,8 @@ async function dossier(): Promise<void> {
   lines.push("Company questions use the Company block only. The persona score is the only one that reads Contact.")
   lines.push("Questions, each 0 to 1 unless noted: live_need, need_matches_offer, icp_fit, persona_fit, signals_one_story (true/false), competitor (true/false).")
   lines.push("Also write hook (one sentence) and reason (one sentence). Set judged to true.")
+  lines.push("Copy the lead's Fingerprint into fingerprint. Write each judgment on a single line.")
+  lines.push("Signals are pooled per account: the Company block lists every signal max sent for this company, from any contact.")
   lines.push("")
   lines.push("## Offer")
   lines.push(cfg.offer.selling_description)
@@ -274,7 +328,9 @@ async function dossier(): Promise<void> {
   lines.push(`Bad fits: ${cfg.icp.bad_fits.join(", ") || "none listed"}`)
   lines.push("")
   for (const lead of leads) {
-    const slugs = lead.signals.map((signal) => signal.slug)
+    const account = accountOf.get(lead.id)
+    const slugs = (account?.signals ?? lead.signals).map((signal) => signal.slug)
+    const others = (account?.leads ?? []).filter((other) => other.id !== lead.id)
     lines.push(`## Lead ${lead.id}`)
     lines.push("")
     lines.push("### Company")
@@ -283,11 +339,17 @@ async function dossier(): Promise<void> {
     lines.push(`- Size: ${lead.companySize ?? "unknown"}`)
     lines.push(`- Website: ${lead.companyWebsite ?? "unknown"}`)
     lines.push(`- Location: ${lead.location ?? "unknown"}`)
-    lines.push(`- Signals: ${slugs.join(", ") || "none"}`)
+    lines.push(`- Account: ${account?.key ?? "unknown"}`)
+    lines.push(`- Fingerprint: ${account?.fingerprint ?? "none"}`)
+    lines.push(`- Signals at this account: ${slugs.join(", ") || "none"}`)
     lines.push(`- Evidence: ${lead.evidence ?? "none"}`)
+    for (const other of others) {
+      if (other.evidence && other.evidence !== lead.evidence) lines.push(`- Evidence from another contact here: ${other.evidence}`)
+    }
+    if (others.length) lines.push(`- Other contacts max sent for this account: ${others.length}`)
     lines.push(`- Source: ${lead.postUrl ?? "none"}`)
     lines.push(`- When: ${lead.triggeredAt ?? "unknown"}`)
-    lines.push(`- Max ICP score: ${lead.icpScore ?? "unknown"}`)
+    lines.push(`- max ICP score: ${lead.icpScore ?? "unknown"}`)
     lines.push("")
     lines.push("### Contact")
     lines.push("Read this block only for persona_fit.")
@@ -299,11 +361,11 @@ async function dossier(): Promise<void> {
     lines.push("")
   }
   writeText(outPath("dossier.md"), lines.join("\n"))
-  console.log(JSON.stringify({ leads: leads.length, dossier: outPath("dossier.md") }, null, 2))
+  console.log(JSON.stringify({ leads: leads.length, rejudge_new_evidence: rejudged, dossier: outPath("dossier.md") }, null, 2))
 }
 
 async function rank(): Promise<void> {
-  const { ranked, gated } = rankAll(Boolean(flags.heuristic) || loadJudgments().size === 0)
+  const { ranked, gated, stale } = rankAll(Boolean(flags.heuristic) || loadJudgments().size === 0)
   writeJson(outPath("ranked.json"), ranked)
   writeText(outPath("ranked.csv"), rankedToCsv(ranked))
   writeJson(outPath("gated.json"), gated)
@@ -316,6 +378,7 @@ async function rank(): Promise<void> {
         gated: gated.length,
         counts,
         judged: ranked.filter((row) => row.judgment.judged).length,
+        stale_judgments: stale,
         csv: outPath("ranked.csv"),
       },
       null,
@@ -350,7 +413,7 @@ async function draft(): Promise<void> {
   writeJson(outPath("draft-plan.json"), { confirm: Boolean(flags.confirm), plan })
   if (!flags.confirm) {
     console.log(JSON.stringify({ dry_run: true, enrollments: ready.length, plan }, null, 2))
-    console.log("\nDry run. Nothing was created. Re-run with --confirm to create paused campaigns and enroll these leads.")
+    console.log("\nDry run. Nothing was created. Re-run with --confirm to create the campaigns (auto-send off) and enroll these leads.")
     return
   }
   if (ready.length === 0) {
@@ -362,6 +425,7 @@ async function draft(): Promise<void> {
   const me = await overloop.me()
   const senderId = cfg.sender_id ?? me.id
   const results: Array<Record<string, unknown>> = []
+  const now = new Date().toISOString()
   for (const [playbook, rows] of grouped) {
     const name = campaignName(playbook)
     let campaign = await overloop.findCampaignByName(name)
@@ -377,6 +441,16 @@ async function draft(): Promise<void> {
         const prospectId = await upsertProspect(overloop, row)
         await overloop.enroll(campaign.id, prospectId)
         enrolled.push(row.lead.id)
+        appendEnrollment({
+          lead_id: row.lead.id,
+          account: row.account ?? `lead:${row.lead.id}`,
+          campaign_id: campaign.id,
+          campaign: name,
+          playbook,
+          tier: row.tier,
+          prospect_id: prospectId,
+          at: now,
+        })
       } catch (error) {
         skipped.push({ lead_id: row.lead.id, error: error instanceof Error ? error.message : String(error) })
       }
@@ -384,7 +458,17 @@ async function draft(): Promise<void> {
     results.push({ campaign_id: campaign.id, name, created, status: campaign.status, enrolled, skipped })
   }
   writeJson(outPath("draft-result.json"), results)
-  console.log(JSON.stringify({ paused: true, review_mode: true, results }, null, 2))
+  console.log(
+    JSON.stringify(
+      {
+        auto_send: false,
+        note: "Campaign status is what Overloop reports. New campaigns stay off until activate --confirm.",
+        results,
+      },
+      null,
+      2,
+    ),
+  )
 }
 
 function campaignBody(name: string, playbook: PlaybookId, cfg: OfferConfig, senderId: number): Record<string, unknown> {
@@ -405,11 +489,23 @@ function campaignBody(name: string, playbook: PlaybookId, cfg: OfferConfig, send
   }
 }
 
+function normalizeLinkedin(url: string | null | undefined): string | null {
+  if (!url) return null
+  const match = url.toLowerCase().match(/linkedin\.com\/in\/([^/?#]+)/)
+  return match ? decodeURIComponent(match[1]).replace(/\/$/, "") : null
+}
+
 async function upsertProspect(overloop: Overloop, row: RankedLead): Promise<number> {
   const lead = row.lead
   if (lead.email) {
     const existing = await overloop.searchProspects(lead.email)
     const match = existing.find((item) => item.email?.toLowerCase() === lead.email?.toLowerCase())
+    if (match) return match.id
+  }
+  const handle = normalizeLinkedin(lead.linkedinUrl)
+  if (handle) {
+    const existing = await overloop.searchProspects(handle).catch(() => [])
+    const match = existing.find((item) => normalizeLinkedin(item.linkedin_profile) === handle)
     if (match) return match.id
   }
   const [first, ...rest] = (lead.name ?? "").split(/\s+/).filter(Boolean)
@@ -460,8 +556,45 @@ async function inbox(): Promise<void> {
   console.log(JSON.stringify({ total: body.pagination?.total ?? rows.length, conversations: rows }, null, 2))
 }
 
+function calls(): void {
+  const { ranked } = rankAll(false)
+  const wanted = new Set((flags.tier ? String(flags.tier) : "strike").split(",").map((item) => item.trim()))
+  const rows = ranked.filter((row) => row.judgment.judged && wanted.has(row.tier))
+  const path = outPath("calls.csv")
+  writeText(
+    path,
+    toCsv(
+      ["tier", "score", "name", "title", "company", "phone", "email", "linkedin", "signal", "hook", "reason", "lead_id"],
+      rows.map((row) => [
+        row.tier,
+        row.score,
+        row.lead.name,
+        row.lead.jobTitle,
+        row.lead.company,
+        row.lead.phone ?? "",
+        row.lead.email ?? "",
+        row.lead.linkedinUrl ?? "",
+        row.primarySignal ?? "",
+        row.judgment.hook,
+        row.judgment.reason,
+        row.lead.id,
+      ]),
+    ),
+  )
+  console.log(
+    JSON.stringify(
+      { tiers: [...wanted], leads: rows.length, with_phone: rows.filter((row) => row.lead.phone).length, calls: path },
+      null,
+      2,
+    ),
+  )
+}
+
 function outcome(): void {
   if (!flags.lead || !flags.result) throw new Error("--lead and --result are required")
+  if (!(OUTCOMES as readonly string[]).includes(String(flags.result))) {
+    throw new Error(`--result must be one of: ${OUTCOMES.join(", ")}`)
+  }
   appendOutcome({ lead_id: Number(flags.lead), result: String(flags.result) })
   console.log(JSON.stringify({ logged: { lead_id: Number(flags.lead), result: flags.result } }, null, 2))
 }
@@ -476,7 +609,7 @@ function learn(): void {
   let aboveReply = 0
   let below = 0
   let belowReply = 0
-  const replies = new Set(["reply", "meeting", "positive"])
+  const replies = new Set(["reply", "meeting"])
   for (const outcomeRow of outcomes) {
     const row = byId.get(outcomeRow.lead_id)
     if (!row) continue
@@ -499,7 +632,7 @@ function learn(): void {
         matched: above + below,
         above_line: { n: above, replies: aboveReply, rate: aboveRate },
         below_line: { n: below, replies: belowReply, rate: belowRate },
-        verdict: miscalibrated ? "MISCALIBRATED" : above + below < 10 ? "NEED_MORE_OUTCOMES" : "HOLDS",
+        verdict: miscalibrated ? "MISCALIBRATED" : above < 5 || below < 5 ? "NEED_MORE_OUTCOMES" : "HOLDS",
         note: "Change config/ranker.yaml and rank again. Do not call another model.",
       },
       null,

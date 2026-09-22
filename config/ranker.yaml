@@ -8,6 +8,12 @@ reroute_need: 0.6
 competitor_cap: 34
 recency_days: 30
 
+# Accounts. Signals pool across every contact max sends for one company.
+# Only the best contact per account is enrolled in a run, and an account
+# enrolled in the last account_cooldown_days is left alone.
+one_per_account: true
+account_cooldown_days: 30
+
 tiers:
   strike: 80
   priority: 65

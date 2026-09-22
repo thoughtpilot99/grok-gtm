@@ -14,6 +14,9 @@ interface MaxLead {
   company_website?: string | null
   location?: string | null
   icp_score?: number | null
+  phone?: string | null
+  mobile_phone?: string | null
+  phone_number?: string | null
   signals?: Array<{ slug?: string; name?: string }>
   post_url?: string | null
   triggered_at?: string | null
@@ -111,5 +114,6 @@ export function normalizeLead(lead: MaxLead, businessId: number): LeadRecord {
     evidence,
     postUrl: lead.post_url ?? null,
     triggeredAt: lead.triggered_at ?? lead.created_at ?? null,
+    phone: lead.mobile_phone ?? lead.phone ?? lead.phone_number ?? null,
   }
 }
