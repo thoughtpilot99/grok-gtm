@@ -1,0 +1,25 @@
+# Starting priors. Change a number and run `npm run gtm -- rank` again.
+# The score is a sort order. The floors below the weights decide who is worked.
+
+act_floor: 50
+live_need_floor: 0.4
+persona_floor: 0.45
+reroute_need: 0.6
+competitor_cap: 34
+recency_days: 30
+
+tiers:
+  strike: 80
+  priority: 65
+  standard: 50
+  light: 35
+
+weights:
+  live_need: 32
+  persona: 20
+  icp: 12
+  signal: 18
+  recency: 8
+  hook: 2
+  second_signal: 5
+  max_icp: 3

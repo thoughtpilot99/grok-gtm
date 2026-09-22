@@ -1,0 +1,66 @@
+# Who this bot prospects for. Seeded from the Overloop business in Max.
+# Change it before you enroll anyone for a different company.
+# sender_id is the Overloop user whose mailbox sends. 1547 is the API key
+# owner on this account and has a connected Gmail. Change it if you want a
+# different mailbox from `npm run gtm -- doctor`.
+
+business_id: 3
+sender_id: 1547
+timezone: Europe/Brussels
+sending_days:
+  - monday
+  - tuesday
+  - wednesday
+  - thursday
+  - friday
+start_sending_minutes: 540
+end_sending_minutes: 1020
+
+offer:
+  website_url: https://overloop.com
+  selling_description: Overloop runs outbound across email and LinkedIn. It sources prospects, writes a distinct note for each one from your pitch, and carries the follow-ups.
+  pain_points: Lists take days to build. The same cold email gets reused. LinkedIn and email live in different tools, so follow-ups slip.
+  benefits: One sequence across both channels. Messages are written from the pitch and the prospect, then queued for review. Replies land in one inbox.
+  proof_points: The sequence timing comes from a large history of outbound campaigns. You approve the first sends before anything goes out automatically.
+  campaign_intent: Book a 15-minute working session on their own ICP.
+
+voice:
+  language: english (United States)
+  formality: friendly
+  tone_of_voice: straightforward
+  length: short
+
+icp:
+  titles:
+    - Sales Manager
+    - Marketing Manager
+    - Business Development Manager
+    - Growth Hacker
+    - Lead Generation Specialist
+    - senior executive
+    - general manager
+    - Head of Sales
+    - Head of Growth
+    - VP Sales
+  industries:
+    - Marketing
+    - Software Development & SaaS
+    - Consulting
+    - E-Commerce & Retail
+    - Hospitality & Tourism
+  sizes:
+    - 11-50
+    - 51-200
+    - 201-500
+    - 500+
+  locations:
+    - Belgium
+    - France
+  bad_fits:
+    - Recruiters hiring for someone else
+    - Agencies that sell outbound to their own clients
+    - Students and interns
+  excluded_keywords:
+    - intern
+    - bras droit
+  competitors: []

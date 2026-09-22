@@ -1,0 +1,14 @@
+node_modules
+.DS_Store
+*.tsbuildinfo
+
+# Local secrets and lead stores. Never commit these.
+.env
+.env.local
+!.env.example
+data
+out
+
+# Next leftover, if a future UI is added
+.next
+.vercel
