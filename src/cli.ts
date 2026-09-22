@@ -648,7 +648,7 @@ async function probe(): Promise<void> {
   const name = `Grok GTM probe ${new Date().toISOString()}`
   const created = await overloop.createCampaign(campaignBody(name, "email-light", cfg, cfg.sender_id ?? me.id))
   await overloop.deleteCampaign(created.id)
-  console.log(JSON.stringify({ probed: true, created_and_deleted: created.id, name }, null, 2))
+  console.log(JSON.stringify({ probed: true, created_and_deleted: created.id, status_on_create: created.status ?? null, name }, null, 2))
 }
 
 function trim(value: string, max: number): string {
