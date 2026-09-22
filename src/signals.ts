@@ -1,8 +1,8 @@
 import type { SignalDef } from "./types.js"
 
 /**
- * Buying signals Max can emit today, plus the watch-only signals from the
- * signal catalog so Grok can label evidence Max has not productized yet.
+ * Buying signals max can emit today, plus the watch-only signals from the
+ * signal catalog so Grok can label evidence max has not productized yet.
  *
  * Strength order follows the outbound method: a tender outranks competitor
  * sales-team attention, which outranks a reposted role, which outranks a
@@ -77,7 +77,7 @@ export const SIGNALS: SignalDef[] = [
     channelBias: "email",
     liveNeedPrior: 0.7,
     available: false,
-    summary: "A tool disappeared or was replaced in the same category. Watch-only until Max ships it.",
+    summary: "A tool disappeared or was replaced in the same category. Watch-only until max ships it.",
   },
   {
     slug: "key-departure",
@@ -87,7 +87,7 @@ export const SIGNALS: SignalDef[] = [
     channelBias: "linkedin",
     liveNeedPrior: 0.68,
     available: false,
-    summary: "A departure opens an operational gap. Watch-only until Max ships it.",
+    summary: "A departure opens an operational gap. Watch-only until max ships it.",
   },
   {
     slug: "regulatory",

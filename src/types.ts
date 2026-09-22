@@ -46,6 +46,8 @@ export interface LeadRecord {
   evidence: string | null
   postUrl: string | null
   triggeredAt: string | null
+  /** A phone number when max sends one. The call list uses it. */
+  phone?: string | null
 }
 
 export interface Judgment {
@@ -66,6 +68,8 @@ export interface Judgment {
   reason: string
   /** True only after Grok writes the judgment. Heuristics stay false. */
   judged?: boolean
+  /** The account fingerprint from the dossier. A new signal on the account makes this judgment stale. */
+  fingerprint?: string
 }
 
 export interface RankedLead {
@@ -78,6 +82,8 @@ export interface RankedLead {
   secondSignal: string | null
   reasons: string[]
   ageDays: number | null
+  /** Company domain or normalized name. One contact per account is enrolled. */
+  account?: string
 }
 
 export interface OfferConfig {
@@ -130,4 +136,8 @@ export interface RankerConfig {
     max_icp: number
   }
   recency_days: number
+  /** Enroll only the best contact per account in a run. */
+  one_per_account: boolean
+  /** Skip an account that was enrolled this many days ago or less. */
+  account_cooldown_days: number
 }
